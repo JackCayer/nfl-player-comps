@@ -11,7 +11,7 @@ Comparison metrics:
 -- Metrics are standardized with z-scores
 
 
-Ex. comparison: Jaxon Smith-Njigba
+Ex. comparison: Jaxon Smith-Njigba (as of oct 4 2026)
 
 Chris Olave 1.372396 
 
