@@ -32,3 +32,11 @@ Tee Higgins 2.911925
  DeVonta Smith 2.998386 
 
 Josh Downs 3.092949
+
+FANTASY
+
+-- At some points the last 8 games window contains 2025 games which are the same games used in the baseline calculation. That makes the adjusted gap smaller than it should be. Will update to use only 2026 games after week 8.
+
+-- Players whose scoring ran well above their usage tended to score less over the following game, and those well below tended to score more. The effect was clear at the extremes but small overall, and the data covers about one season.
+
+-- Receivers who scored well above their usage tended to score about 1 to 1.5 points less in the following game than receivers with the same recent scoring but in-line usage (2021-2026, standard scoring). Part of the overall decline in top scorers is ordinary regression to the mean, which the usage gap does not explain. Blending recent scoring with a usage-based expectation lowered prediction error by about 1%.
