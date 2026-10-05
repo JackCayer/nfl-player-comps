@@ -1,5 +1,7 @@
 # NFL WR Comps + Fantasy Usage Model
 
+100% Vibecoded with claude
+
 Two things in one project, both built on public NFL data (nflverse, via `nflreadpy`):
 
 1. **WR comparison** -- input a player's name, get the closest matches right now
