@@ -5,3 +5,4 @@ pyarrow
 streamlit
 jupyter
 matplotlib
+pytest

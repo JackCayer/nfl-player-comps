@@ -1,129 +1,23 @@
-import nflreadpy as nfl
 import pandas as pd
 import streamlit as st
-from sklearn.linear_model import LinearRegression
+
+from src.wrmodel import (
+    COMP_METRICS, FIRST_SEASON, closest_comps, load_wr, make_backtest_frame,
+    project_current, season_table,
+)
 
 st.set_page_config(page_title="NFL WR Comps + Fantasy Usage Model", layout="wide")
 
-FIRST_SEASON = 2021
-WINDOW = 8          # games used for "recent" scoring and usage
+WINDOW = 8              # games used for "recent" scoring and usage
 MIN_WINDOW_GAMES = 4
-MIN_TARGETS_PER_GAME = 4
-FEATURES = ["fp_r8", "targets_r8", "wopr_r8"]
-COMP_METRICS = {
-    "targets_per_game": "Targets / game",
-    "catch_rate": "Catch rate",
-    "yards_per_target": "Yards / target",
-    "air_yards_per_target": "Air yards / target",
-    "yac_per_reception": "YAC / reception",
-    "epa_per_target": "EPA / target",
-}
 
 
-# ---------------------------------------------------------------- data + model
 @st.cache_data(ttl=6 * 60 * 60, show_spinner="Loading NFL data...")
 def load_data():
-    """Load WR data, fit the model, and build the current projection table."""
-    try:
-        season = int(nfl.get_current_season())
-    except Exception:
-        season = 2026
-
-    try:
-        raw = nfl.load_player_stats(list(range(FIRST_SEASON, season + 1))).to_pandas()
-    except Exception:
-        # offseason: new season has no data yet
-        season -= 1
-        raw = nfl.load_player_stats(list(range(FIRST_SEASON, season + 1))).to_pandas()
-
-    wr = raw[(raw["position"] == "WR") & (raw["season_type"] == "REG")].copy()
-    wr["fp"] = wr["fantasy_points"]  # standard scoring
-    wr = wr.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
-
-    # --- training rows: each game gets features from the player's PREVIOUS 8 games
-    bt = wr.copy()
-    g = bt.groupby("player_id")
-    for col in ["fp", "targets", "wopr"]:
-        bt[col + "_r8"] = g[col].transform(
-            lambda s: s.shift(1).rolling(WINDOW, min_periods=MIN_WINDOW_GAMES).mean()
-        )
-    bt = bt.dropna(subset=["fp", "fp_r8", "targets_r8", "wopr_r8"])
-    bt = bt[bt["targets_r8"] >= MIN_TARGETS_PER_GAME]
-
-    final = LinearRegression().fit(bt[FEATURES], bt["fp"])
-    tier = LinearRegression().fit(bt[["fp_r8"]], bt["fp"])
-
-    # --- current projections: each player's most recent 8 games
-    latest = wr.groupby("player_id").tail(WINDOW)
-    cur = (
-        latest.groupby(["player_id", "player_display_name"])
-        .agg(
-            team=("team", "last"),
-            games=("week", "count"),
-            games_current=("season", lambda s: int((s == season).sum())),
-            fp_r8=("fp", "mean"),
-            targets_r8=("targets", "mean"),
-            wopr_r8=("wopr", "mean"),
-        )
-        .reset_index()
-    )
-    cur = cur[
-        (cur["games"] >= MIN_WINDOW_GAMES)
-        & (cur["games_current"] > 0)
-        & (cur["targets_r8"] >= MIN_TARGETS_PER_GAME)
-    ].dropna()
-
-    cur["projection"] = final.predict(cur[FEATURES])
-    cur["usage_effect"] = cur["projection"] - tier.predict(cur[["fp_r8"]])
-
-    lo, hi = cur["usage_effect"].quantile([0.10, 0.90])
-    cur["flag"] = "hold"
-    cur.loc[cur["usage_effect"] >= hi, "flag"] = "buy-low"
-    cur.loc[cur["usage_effect"] <= lo, "flag"] = "sell-high"
-    cur["note"] = cur["games_current"].apply(
-        lambda n: "mostly prior-season data" if n <= 2 else ""
-    )
-
-    coefs = dict(zip(FEATURES, final.coef_))
-    return wr, cur.reset_index(drop=True), season, coefs, len(bt)
-
-
-def season_table(wr, season, min_targets):
-    """One row per WR for the current season, with the 6 comparison metrics."""
-    s = wr[wr["season"] == season]
-    p = (
-        s.groupby(["player_id", "player_display_name"])
-        .agg(
-            team=("team", "last"),
-            games=("week", "nunique"),
-            targets=("targets", "sum"),
-            receptions=("receptions", "sum"),
-            yards=("receiving_yards", "sum"),
-            air=("receiving_air_yards", "sum"),
-            yac=("receiving_yards_after_catch", "sum"),
-            epa=("receiving_epa", "sum"),
-        )
-        .reset_index()
-    )
-    p = p[p["targets"] >= min_targets].copy()
-    p = p[p["receptions"] > 0]
-    p["targets_per_game"] = p["targets"] / p["games"]
-    p["catch_rate"] = p["receptions"] / p["targets"]
-    p["yards_per_target"] = p["yards"] / p["targets"]
-    p["air_yards_per_target"] = p["air"] / p["targets"]
-    p["yac_per_reception"] = p["yac"] / p["receptions"]
-    p["epa_per_target"] = p["epa"] / p["targets"]
-    return p.reset_index(drop=True)
-
-
-def closest_comps(table, name, n=8):
-    cols = list(COMP_METRICS)
-    z = (table[cols] - table[cols].mean()) / table[cols].std()
-    z.index = table["player_display_name"].values
-    if name not in z.index:
-        return None
-    dist = ((z - z.loc[name]) ** 2).sum(axis=1) ** 0.5
-    return dist.drop(name).sort_values().head(n)
+    wr, season = load_wr()
+    bt = make_backtest_frame(wr, window=WINDOW)
+    cur, coefs = project_current(wr, bt, season, window=WINDOW)
+    return wr, cur, season, coefs, len(bt)
 
 
 # ------------------------------------------------------------------------- app
@@ -158,8 +52,8 @@ with tab_player:
         else:
             r = row.iloc[0]
             a, b, c = st.columns(3)
-            a.metric("Recent avg (last 8)", f"{r['fp_r8']:.1f}")
-            b.metric("Projection", f"{r['projection']:.1f}", f"{r['projection'] - r['fp_r8']:+.1f}")
+            a.metric("Recent avg (last 8)", f"{r['fp_r']:.1f}")
+            b.metric("Projection", f"{r['projection']:.1f}", f"{r['projection'] - r['fp_r']:+.1f}")
             c.metric("Usage effect", f"{r['usage_effect']:+.2f}")
             st.write(f"**Flag: {r['flag']}**  ({r['team']})")
             if r["note"]:
@@ -202,13 +96,13 @@ with tab_board:
     board = board.sort_values("usage_effect", ascending=(flag_pick == "sell-high"))
 
     board_out = board[
-        ["player_display_name", "team", "flag", "fp_r8", "projection", "usage_effect", "games_current", "note"]
+        ["player_display_name", "team", "flag", "fp_r", "projection", "usage_effect", "games_current", "note"]
     ].rename(
         columns={
             "player_display_name": "Player",
             "team": "Team",
             "flag": "Flag",
-            "fp_r8": "Recent avg",
+            "fp_r": "Recent avg",
             "projection": "Projection",
             "usage_effect": "Usage effect",
             "games_current": f"{season} games",
@@ -231,8 +125,8 @@ stat profiles. The second projects next-game fantasy points from recent scoring 
 (targets and WOPR), and flags players whose scoring is out of line with their usage.
 
 **How the projection works.** A linear regression trained walk-forward on {FIRST_SEASON}-{season}
-({n_train:,} player-games). Fitted weights: recent fantasy points **{coefs['fp_r8']:.2f}**,
-targets per game **{coefs['targets_r8']:.2f}**, WOPR **{coefs['wopr_r8']:.2f}**.
+({n_train:,} player-games). Fitted weights: recent fantasy points **{coefs['fp_r']:.2f}**,
+targets per game **{coefs['targets_r']:.2f}**, WOPR **{coefs['wopr_r']:.2f}**.
 The weight under 0.5 on recent scoring is regression to the mean: hot streaks carry forward at
 well under half strength.
 
