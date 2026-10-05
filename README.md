@@ -15,9 +15,9 @@ Basic version. Input a player's name and get the closest matches based on 2026 s
 
 **Stats gathered (2026 regular season, WRs only)**
 
-- # of games
-- # of targets
-- # of receptions
+- num. of games
+- num. of targets
+- num. of receptions
 - total receiving yards
 - total receiving TDs
 - total receiving air yards
